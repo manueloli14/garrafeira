@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="pt-PT"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>A Minha Garrafeira</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#faf6f1;--card:#fff;--tx:#2a1a1d;--mut:#7a6a6c;--ac:#7b1e3a;--bd:#e6dcd3}
+:root:not([data-theme="light"]){}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1c1416;--card:#2a1e21;--tx:#f3e9e6;--mut:#a89598;--ac:#d1607f;--bd:#3c2c30}}
+:root[data-theme="dark"]{--bg:#1c1416;--card:#2a1e21;--tx:#f3e9e6;--mut:#a89598;--ac:#d1607f;--bd:#3c2c30}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.4 Georgia,'Times New Roman',serif}
+main{max-width:720px;margin:0 auto;padding:16px}
+h1{margin:4px 0 12px;font-size:1.6rem;color:var(--ac)}
+.tabs{display:flex;gap:8px;margin-bottom:12px}
+button,input,textarea,select{font:inherit;color:inherit}
+.tab,.btn{border:1px solid var(--bd);background:var(--card);padding:8px 14px;border-radius:20px;cursor:pointer}
+.tab.on,.btn.p{background:var(--ac);color:#fff;border-color:var(--ac)}
+input,textarea,select{width:100%;padding:9px;border:1px solid var(--bd);border-radius:8px;background:var(--card)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.grid .full{grid-column:1/-1}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px;margin:10px 0}
+.card h3{margin:0 0 2px;font-size:1.05rem}
+.mut{color:var(--mut);font-size:.9rem}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center}
+.step{display:inline-flex;align-items:center;border:1px solid var(--bd);border-radius:22px;background:var(--card)}
+.step button{background:none;border:0;font-size:1.25rem;width:42px;height:38px;cursor:pointer;color:var(--ac)}
+.step span{min-width:26px;text-align:center;font-weight:bold}
+.stars button{background:none;border:0;font-size:1.5rem;cursor:pointer;padding:0 2px;color:var(--mut)}
+.stars button.on{color:#e0a800}
+.sug{white-space:pre-wrap}
+.stat{font-size:.9rem;color:var(--mut);margin-bottom:8px}
+</style></head>
+<body><main>
+<h1>🍷 A Minha Garrafeira</h1>
+<div class="stat" id="stat"></div>
+<div class="tabs">
+<button class="tab on" data-t="stock">Em casa</button>
+<button class="tab" data-t="drunk">Bebidos</button>
+<button class="tab" data-t="add">+ Adicionar</button>
+<button class="tab" data-t="sug">Sugestões</button>
+</div>
+<input id="q" placeholder="Pesquisar nome, casta, região, país…" style="margin-bottom:8px">
+<div id="view"></div>
+</main>
+<script>
+var delFor=null,KEY='garrafeira-v1',bottles=[],tab='stock',dbDoc=null,sample=null,noteFor=null,rate=0;
+var $=function(s){return document.querySelector(s)};
+function esc(s){var d=document.createElement('div');d.textContent=s==null?'':s;return d.innerHTML}
+function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
+function loadLocal(){try{var r=localStorage.getItem(KEY);return r?JSON.parse(r):null}catch(e){return null}}
+function save(){
+  try{localStorage.setItem(KEY,JSON.stringify(bottles))}catch(e){}
+  if(dbDoc){try{Promise.resolve(dbDoc.set({bottles:bottles})).catch(function(){})}catch(e){}}
+  return Promise.resolve();
+}
+async function init(){
+  var l=loadLocal();if(l)bottles=l;render();
+  try{
+    if(window.claude){
+      var u=await claude.use('user'),db=await claude.use('db');
+      sample=await claude.use('sample');
+      if(db&&u){
+        var id=await u.id();
+        if(id){
+          dbDoc=db.collection('data/users/'+id).doc('cellar');
+          var s=await dbDoc.get();
+          if(s.exists&&s.data()&&s.data().bottles){bottles=s.data().bottles}
+          else if(bottles.length){await dbDoc.set({bottles:bottles})}
+          render();
+        }
+      }
+    }
+  }catch(e){}
+}
+function delBtn(b){return delFor===b.id?'<span class="mut">Apagar mesmo?</span><button class="btn p" data-a="delyes" data-id="'+b.id+'">Sim</button><button class="btn" data-a="delno">Não</button>':'<button class="btn" data-a="del" data-id="'+b.id+'" aria-label="Apagar">🗑 Apagar</button>'}
+function render(){
+  var stock=bottles.filter(function(b){return b.status!=='drunk'});
+  var n=stock.reduce(function(a,b){return a+(b.qty||1)},0);
+  $('#stat').textContent=n+' garrafas em casa · '+stock.length+' vinhos · '+bottles.filter(function(b){return b.status==='drunk'}).length+' bebidos';
+  document.querySelectorAll('.tab').forEach(function(t){t.classList.toggle('on',t.dataset.t===tab)});
+  $('#q').style.display=(tab==='stock'||tab==='drunk')?'block':'none';
+  var v=$('#view');
+  if(tab==='add')return addView(v);
+  if(tab==='sug')return sugView(v);
+  var q=$('#q').value.toLowerCase();
+  var list=bottles.filter(function(b){
+    if((b.status==='drunk')!==(tab==='drunk'))return false;
+    return !q||[b.name,b.grapes,b.region,b.country,b.year].join(' ').toLowerCase().indexOf(q)>-1});
+  list.sort(function(a,b){return tab==='drunk'?(b.drunkAt||'').localeCompare(a.drunkAt||''):(a.name||'').localeCompare(b.name||'')});
+  if(!list.length){v.innerHTML='<p class="mut">'+(tab==='drunk'?'Ainda nenhum vinho bebido registado.':'Sem garrafas aqui. Usa "+ Adicionar".')+'</p>';return}
+  v.innerHTML=list.map(function(b){
+    var h='<div class="card"><h3>'+esc(b.name)+(b.year?' · '+esc(b.year):'')+'</h3><div class="mut">'+esc(b.grapes)+'</div><div class="mut">'+esc([b.region,b.country].filter(Boolean).join(', '))+'</div>';
+    if(tab==='stock'){
+      h+='<div class="row">'+(delFor===b.id?delBtn(b):'<div class="step">'+((b.qty||1)>1?'<button data-a="minus" data-id="'+b.id+'" aria-label="Tirar uma">−</button>':'<button data-a="del" data-id="'+b.id+'" aria-label="Apagar vinho">🗑</button>')+'<span>'+(b.qty||1)+'</span><button data-a="plus" data-id="'+b.id+'" aria-label="Adicionar uma">＋</button></div><button class="btn p" data-a="drink" data-id="'+b.id+'">🍷 Bebi uma</button>')+'</div>';
+      if(noteFor===b.id){
+        h+='<div style="margin-top:10px"><div class="stars">'+[1,2,3,4,5].map(function(i){return '<button data-a="star" data-i="'+i+'" class="'+(i<=rate?'on':'')+'">★</button>'}).join('')+'</div><textarea id="nt" rows="3" placeholder="Notas de prova…"></textarea><div class="row"><button class="btn p" data-a="confirm" data-id="'+b.id+'">Guardar em Bebidos</button><button class="btn" data-a="cancel">Cancelar</button></div></div>';
+      }
+    }else{
+      h+='<div>'+'★'.repeat(b.rating||0)+'<span class="mut">'+'☆'.repeat(5-(b.rating||0))+'</span> <span class="mut">'+esc(b.drunkAt||'')+'</span></div>'+(b.notes?'<div style="margin-top:4px">'+esc(b.notes)+'</div>':'')+'<div class="row">'+delBtn(b)+'</div>';
+    }
+    return h+'</div>'}).join('');
+}
+function addView(v){
+  v.innerHTML='<div class="card grid"><input class="full" id="f_name" placeholder="Nome do vinho *"><input class="full" id="f_grapes" placeholder="Castas (ex: Touriga Nacional, Alfrocheiro)"><input id="f_year" type="number" placeholder="Ano"><input id="f_qty" type="number" min="1" value="1" placeholder="Quantidade"><input id="f_region" placeholder="Região"><input id="f_country" placeholder="País" value="Portugal"><button class="btn p full" data-a="add">Adicionar à garrafeira</button></div><div class="card"><b>Backup</b><p class="mut">Copia o texto e guarda-o num sítio seguro. Para restaurar, cola-o na caixa.</p><textarea id="bk" rows="3"></textarea><div class="row"><button class="btn" data-a="bk">Gerar backup</button><button class="btn" data-a="rs">Restaurar</button></div></div>';
+}
+function sugView(v){
+  v.innerHTML='<div class="card"><p class="mut">Pede ao Claude sugestões com base no que tens em casa e no que já bebeste.</p><div class="row"><button class="btn p" data-a="s1">O que beber agora?</button><button class="btn p" data-a="s2">O que comprar a seguir?</button></div><div class="sug" id="sugout" style="margin-top:10px"></div></div>';
+  if(!sample){$('#sugout').textContent='As sugestões só estão disponíveis quando abres a página no Claude.'}
+}
+async function ask(kind){
+  var out=$('#sugout');if(!sample){return}
+  var stock=bottles.filter(function(b){return b.status!=='drunk'}).map(function(b){return [b.name,b.year,b.grapes,b.region,b.country,'x'+b.qty].join(' | ')});
+  var drunk=bottles.filter(function(b){return b.status==='drunk'}).map(function(b){return [b.name,b.year,b.grapes,b.region,(b.rating||0)+'/5',b.notes].join(' | ')});
+  var task=kind==='s1'?'Sugere 3 vinhos desta garrafeira para beber agora ou em breve (considera idade/maturidade, casta e região) e diz com que comida os combinar.':'Com base nos gostos revelados nos vinhos bebidos e no que já há em casa, sugere 5 vinhos ou estilos a comprar, que complementem a garrafeira sem repetir o que já existe.';
+  out.textContent='A pensar…';
+  try{
+    var r=await sample('És um sommelier. Responde em português de Portugal, de forma concisa.\n\nEM CASA:\n'+(stock.join('\n')||'(vazio)')+'\n\nBEBIDOS (com nota e comentários):\n'+(drunk.join('\n')||'(nenhum)')+'\n\nPedido: '+task);
+    out.textContent=r.text;
+  }catch(e){out.textContent='Não foi possível obter sugestões agora.'}
+}
+document.addEventListener('click',async function(e){
+  var t=e.target.closest('button');if(!t)return;
+  if(t.dataset.t){tab=t.dataset.t;noteFor=null;render();return}
+  var a=t.dataset.a,id=t.dataset.id,b=bottles.find(function(x){return x.id===id});
+  if(a==='add'){
+    var name=$('#f_name').value.trim();if(!name){$('#f_name').focus();return}
+    bottles.push({id:uid(),name:name,grapes:$('#f_grapes').value.trim(),year:$('#f_year').value,region:$('#f_region').value.trim(),country:$('#f_country').value.trim(),qty:Math.max(1,parseInt($('#f_qty').value)||1),status:'stock'});
+    tab='stock';await save();render();
+  }else if(a==='plus'&&b){b.qty=(b.qty||1)+1;await save();render()}
+  else if(a==='drink'){noteFor=id;rate=0;render()}
+  else if(a==='star'){rate=+t.dataset.i;var nv=$('#nt').value;render();$('#nt').value=nv}
+  else if(a==='cancel'){noteFor=null;render()}
+  else if(a==='confirm'&&b){
+    var notes=$('#nt').value.trim(),today=new Date().toISOString().slice(0,10);
+    bottles.push({id:uid(),name:b.name,grapes:b.grapes,year:b.year,region:b.region,country:b.country,qty:1,status:'drunk',rating:rate,notes:notes,drunkAt:today});
+    b.qty=(b.qty||1)-1;if(b.qty<=0)bottles=bottles.filter(function(x){return x.id!==id});
+    noteFor=null;await save();render();
+  }else if(a==='bk'){$('#bk').value=JSON.stringify(bottles);$('#bk').select()}
+  else if(a==='rs'){try{var d=JSON.parse($('#bk').value);if(Array.isArray(d)){bottles=d;await save();tab='stock';render()}}catch(e){$('#bk').value='Backup inválido'}}
+  else if(a==='minus'&&b){b.qty=(b.qty||1)-1;if(b.qty<=0)bottles=bottles.filter(function(x){return x.id!==id});await save();render()}
+  else if(a==='del'){delFor=id;render()}
+  else if(a==='delno'){delFor=null;render()}
+  else if(a==='delyes'){bottles=bottles.filter(function(x){return x.id!==id});delFor=null;await save();render()}
+  else if(a==='s1'||a==='s2'){ask(a)}
+});
+$('#q').addEventListener('input',render);
+init();
+</script></body></html>
